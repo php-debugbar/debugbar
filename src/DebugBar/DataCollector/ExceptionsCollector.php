@@ -10,7 +10,7 @@
 
 namespace DebugBar\DataCollector;
 
-use Exception;
+use Throwable;
 use Symfony\Component\Debug\Exception\FatalThrowableError;
 
 /**
@@ -24,10 +24,10 @@ class ExceptionsCollector extends DataCollector implements Renderable
     /**
      * Adds an exception to be profiled in the debug bar
      *
-     * @param Exception $e
+     * @param \Exception $e
      * @deprecated in favor on addThrowable
      */
-    public function addException(Exception $e)
+    public function addException(\Exception $e)
     {
         $this->addThrowable($e);
     }
@@ -35,7 +35,7 @@ class ExceptionsCollector extends DataCollector implements Renderable
     /**
      * Adds a Throwable to be profiled in the debug bar
      *
-     * @param \Throwable $e
+     * @param Throwable $e
      */
     public function addThrowable($e)
     {
@@ -56,9 +56,69 @@ class ExceptionsCollector extends DataCollector implements Renderable
     }
 
     /**
+     * Start collecting warnings, notices and deprecations
+     *
+     * @param bool $preserveOriginalHandler
+     */
+    public function collectWarnings($preserveOriginalHandler = true) {
+        $self = $this;
+        $originalHandler = $preserveOriginalHandler ? set_error_handler(null) : null;
+
+        set_error_handler(function ($errno, $errstr, $errfile, $errline) use ($self, $originalHandler) {
+            $self->addWarning($errno, $errstr, $errfile, $errline);
+
+            if ($originalHandler) {
+                return call_user_func($originalHandler, $errno, $errstr, $errfile, $errline);
+            }
+
+            return false;
+        });
+    }
+
+    /**
+     * Adds an warning to be profiled in the debug bar
+     *
+     * @param int $errno
+     * @param string $errstr
+     * @param string $errfile
+     * @param int $errline
+     * @return void
+     */
+    public function addWarning($errno, $errstr, $errfile = '', $errline = 0)
+    {
+        $errorTypes = array(
+            1    => 'E_ERROR',
+            2    => 'E_WARNING',
+            4    => 'E_PARSE',
+            8    => 'E_NOTICE',
+            16   => 'E_CORE_ERROR',
+            32   => 'E_CORE_WARNING',
+            64   => 'E_COMPILE_ERROR',
+            128  => 'E_COMPILE_WARNING',
+            256  => 'E_USER_ERROR',
+            512  => 'E_USER_WARNING',
+            1024 => 'E_USER_NOTICE',
+            2048 => 'E_STRICT',
+            4096 => 'E_RECOVERABLE_ERROR',
+            8192 => 'E_DEPRECATED',
+            16384 => 'E_USER_DEPRECATED'
+        );
+
+        $this->exceptions[] = array(
+            'type' => $errorTypes[$errno] ?? 'UNKNOWN',
+            'message' => $errstr,
+            'code' => $errno,
+            'file' => $this->normalizeFilePath($errfile),
+            'line' => $errline,
+            'xdebug_link' => $this->getXdebugLink($errfile, $errline)
+        );
+    }
+
+
+    /**
      * Returns the list of exceptions being profiled
      *
-     * @return array[\Throwable]
+     * @return array<Throwable|array>
      */
     public function getExceptions()
     {
@@ -76,11 +136,11 @@ class ExceptionsCollector extends DataCollector implements Renderable
     /**
      * Returns exception data as an array
      *
-     * @param Exception $e
+     * @param \Exception $e
      * @return array
      * @deprecated in favor on formatThrowableData
      */
-    public function formatExceptionData(Exception $e)
+    public function formatExceptionData(\Exception $e)
     {
         return $this->formatThrowableData($e);
     }
@@ -119,7 +179,7 @@ class ExceptionsCollector extends DataCollector implements Renderable
     /**
      * Returns Throwable data as an string
      *
-     * @param \Throwable $e
+     * @param Throwable $e
      * @return string
      */
     public function formatTraceAsString($e)
@@ -141,11 +201,15 @@ class ExceptionsCollector extends DataCollector implements Renderable
     /**
      * Returns Throwable data as an array
      *
-     * @param \Throwable $e
+     * @param Throwable|array $e
      * @return array
      */
     public function formatThrowableData($e)
     {
+        if (is_array($e)) {
+            return $e;
+        }
+
         $filePath = $e->getFile();
         if ($filePath && file_exists($filePath)) {
             $lines = file($filePath);
